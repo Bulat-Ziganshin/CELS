@@ -1,6 +1,6 @@
 /*
     CELS - Framework and standard API for compression algorithms
-    Copyright (C) 2017, Bulat Ziganshin <Bulat.Ziganshin@gmail.com>
+    Copyright (C) 2017-2021, Bulat Ziganshin <Bulat.Ziganshin@gmail.com>
 
     MIT License (https://opensource.org/licenses/MIT)
 
@@ -234,6 +234,76 @@ CELS_DEFINE_GETTER_AND_SETTER (Caching,             CACHING);
 // Provides appropriate callback for codecs that doesn't support inbuf and/or outbuf.
 CelsResult CelsCompressMem   (const void* method, void* inbuf, CelsNum insize, void* outbuf, CelsNum outsize, void* ud, CelsCallback* cb);
 CelsResult CelsDecompressMem (const void* method, void* inbuf, CelsNum insize, void* outbuf, CelsNum outsize, void* ud, CelsCallback* cb);
+
+
+// *** Stream processing helpers ******************************************************************************************
+
+#define CELS_RETURN(result)                     {errcode = (result);  goto finished;}
+#define CELS_RETURN2(result, default_errcode)   CELS_RETURN((result) < CELS_OK? (result) : (default_errcode))
+
+#define CELS_WRITE_EXACTLY(buf, size) \
+        {CelsResult result = CelsWrite(cb,ud, (buf),(size)); \
+        if (result != (size))  CELS_RETURN2(result, CELS_ERROR_WRITE);}
+
+// Usual way to read data going to compress. Should read less than `size` bytes only at EOF
+#define CELS_READ_OR_EOF(len, buf, size) \
+        {CelsResult result = CelsRead(cb,ud, (buf),(size)); \
+        if (result == 0)       CELS_RETURN(CELS_OK); \
+        if (result < CELS_OK)  CELS_RETURN(result); \
+        (len) = result;}
+
+// Useful only to read some structured (i.e. compressed) data. If we can't read as much, this means data are corrupt
+#define CELS_READ_EXACTLY(buf, size) \
+        {CelsResult result = CelsRead(cb,ud, (buf),(size)); \
+        if (result != (size))  CELS_RETURN2(result, CELS_ERROR_BAD_COMPRESSED_DATA);}
+
+// Same as above, but EOF means we have no more compressed blocks
+#define CELS_READ_EXACTLY_OR_EOF(buf, size) \
+        {CelsResult result = CelsRead(cb,ud, (buf),(size)); \
+        if (result == 0)       CELS_RETURN(CELS_OK); \
+        if (result != (size))  CELS_RETURN2(result, CELS_ERROR_BAD_COMPRESSED_DATA);}
+
+// Read an integer value W bytes wide, using Intel byte-order
+#define CELS_READ_INT_EXACTLY_OR_EOF(result, W) \
+        {char buf[16]; \
+        CELS_READ_EXACTLY_OR_EOF(buf, (W)); \
+        (result) = CelsDeserializeInt(buf, (W));}
+
+// Read buffer prefixed with size
+#define CELS_READ_WITH_SIZE_OR_EOF(size,W, buf,bufSize) \
+        {CELS_READ_INT_EXACTLY_OR_EOF((size), (W)); \
+        if ((size) == 0)         CELS_RETURN(CELS_OK); \
+        if ((size) > (bufSize))  CELS_RETURN(CELS_ERROR_BAD_COMPRESSED_DATA); \
+        CELS_READ_EXACTLY((buf), (size));}
+
+// Write buffer prefixed with size (first W bytes of buffer should be reserved reserved for the size value)
+#define CELS_WRITE_WITH_SIZE(size,W, buf) \
+        {CelsSerializeInt((size), (buf), (W)); \
+        CELS_WRITE_EXACTLY((buf), (size) + (W));}
+
+// Serialize the value into W bytes of the buffer, using Intel byte-order
+inline static void CelsSerializeInt(CelsResult value, char* buf, int W)
+{
+    unsigned char* ptr = (unsigned char*) buf;
+    while (W--) {
+        *ptr++ = (unsigned char) value;
+        value >>= 8;
+    }
+}
+
+// Deserialize an integer value W bytes wide, using Intel byte-order
+inline static CelsResult CelsDeserializeInt(void* buf, int W)
+{
+    unsigned char* ptr = (unsigned char*) buf;
+    CelsResult result = 0;
+    int shift = 0;
+    while (W--) {
+        result += (*ptr++ << shift);
+        shift += 8;
+    }
+    return result;
+}
+
 
 #ifdef __cplusplus
 }       // extern "C"
