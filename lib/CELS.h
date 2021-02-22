@@ -29,6 +29,8 @@
 #ifndef CELS_H
 #define CELS_H
 
+#include <stdlib.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -102,6 +104,8 @@ const int CELS_RECEIVE_FILLED_INBUF             = 0x10000004;   // Receive next 
 const int CELS_SEND_EMPTY_INBUF                 = 0x10000005;   // Send empty input buffer (inbuf,insize) into the queue
 const int CELS_RECEIVE_EMPTY_OUTBUF             = 0x10000006;   // Receive next empty output buffer from the queue: bufsize returned as result, bufptr stored in *outbuf
 const int CELS_SEND_FILLED_OUTBUF               = 0x10000007;   // Send filled output buffer (outbuf,outsize) into the queue
+const int CELS_MEM_ALLOC                        = 0x10000008;   // Alloc outsize memory bytes and return pointer in *outbuf
+const int CELS_MEM_FREE                         = 0x10000009;   // Free memory pointed by inbuf (should be implemented if and only if CELS_MEM_ALLOC is also implemented)
 
 // Operations that can be implemented by codec in CelsMain()
 inline static int IS_CELS_CODEC_SERVICE (int service)  {return (service&0xFF000000)==0x04000000;}   // Family of codec services
@@ -162,6 +166,26 @@ inline static CelsResult CelsReceiveFilledInbuf (CelsCallback* cb, void* ud, voi
 inline static CelsResult CelsSendEmptyInbuf     (CelsCallback* cb, void* ud, void* buf, CelsNum size)  {return cb(ud, CELS_SEND_EMPTY_INBUF,0,      buf,size, 0,0, 0,0);}
 inline static CelsResult CelsReceiveEmptyOutbuf (CelsCallback* cb, void* ud, void** buf)               {return cb(ud, CELS_RECEIVE_EMPTY_OUTBUF,0,  0,0,    buf,0, 0,0);}
 inline static CelsResult CelsSendFilledOutbuf   (CelsCallback* cb, void* ud, void* buf, CelsNum size)  {return cb(ud, CELS_SEND_FILLED_OUTBUF,0,    0,0, buf,size, 0,0);}
+
+// Ask host to alloc memory for us, falling back to malloc if host doesn't implement the service
+inline static void* CelsMemAlloc (CelsCallback* cb, void* ud, CelsNum size)
+{
+    void* ptr = NULL;
+    CelsResult result = cb? cb(ud, CELS_MEM_ALLOC,0, 0,0, &ptr,size, 0,0)
+                          : CELS_ERROR_NOT_IMPLEMENTED;
+    if (result == CELS_ERROR_NOT_IMPLEMENTED)
+        ptr = malloc(size);
+    return ptr;
+}
+
+// Free memory previously allocated by host (or malloc)
+inline static void CelsMemFree (CelsCallback* cb, void* ud, void* buf)
+{
+    CelsResult result = cb? cb(ud, CELS_MEM_FREE,0, buf,0, 0,0, 0,0)
+                          : CELS_ERROR_NOT_IMPLEMENTED;
+    if (result == CELS_ERROR_NOT_IMPLEMENTED)
+        free(buf);
+}
 
 inline static CelsResult CelsCompress  (const void* method, void* ud, CelsCallback* cb)  {return Cels(method, CELS_COMPRESS,0,   0,0, 0,0, ud,cb);}
 inline static CelsResult CelsDecompress(const void* method, void* ud, CelsCallback* cb)  {return Cels(method, CELS_DECOMPRESS,0, 0,0, 0,0, ud,cb);}
