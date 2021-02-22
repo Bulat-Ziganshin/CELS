@@ -41,8 +41,35 @@ struct Lz4Codec
 };
 
 
+// Memory buffer compression: from inbuf to outbuf
+CelsResult CELS_LZ4_compress_membuf (Lz4Codec *codec, void* inbuf, CelsNum insize, void* outbuf, CelsNum outsize, void* ud, CelsCallback* cb)
+{
+    void *LZ4_state = CelsMemAlloc(cb,ud, LZ4_sizeofState());
+    if (LZ4_state == NULL)  return CELS_ERROR_NOT_ENOUGH_MEMORY;
+
+    // LZ4_compress*() returns compressed size, or 0 if compression failed for any reason
+    outsize = LZ4_compress_fast_extState(LZ4_state, (const char*)inbuf, (char*)outbuf, insize, outsize, codec->acceleration);
+    CelsMemFree(cb,ud, LZ4_state);
+
+    if (codec->MinCompression > 0  &&  outsize > insize * codec->MinCompression)
+        return CELS_ERROR_OUTBLOCK_TOO_SMALL;
+
+    return (outsize > 0 ?  outsize : CELS_ERROR_GENERAL);
+}
+
+
+// Memory buffer decompression: from inbuf to outbuf
+CelsResult CELS_LZ4_decompress_membuf (Lz4Codec *codec, void* inbuf, CelsNum insize, void* outbuf, CelsNum outsize, void* ud, CelsCallback* cb)
+{
+    // LZ4_decompress_safe() returns output size, or negative value if decompression failed
+    outsize = LZ4_decompress_safe((const char*)inbuf, (char*)outbuf, insize, outsize);
+
+    return (outsize >= 0 ?  outsize : CELS_ERROR_BAD_COMPRESSED_DATA);
+}
+
+
 // Stream compression employing callbacks for I/O
-CelsResult CELS_LZ4_compress (Lz4Codec* codec, void* ud, CelsCallback* cb)
+CelsResult CELS_LZ4_compress_stream (Lz4Codec* codec, void* ud, CelsCallback* cb)
 {
     size_t origBufSize = codec->StreamChunkSize;
     size_t compressedBufSize = LZ4_compressBound(origBufSize);
@@ -77,7 +104,7 @@ finished:
 
 
 // Stream decompression employing callbacks for I/O
-CelsResult CELS_LZ4_decompress (Lz4Codec* codec, void* ud, CelsCallback* cb)
+CelsResult CELS_LZ4_decompress_stream (Lz4Codec* codec, void* ud, CelsCallback* cb)
 {
     size_t origBufSize = codec->StreamChunkSize;
     size_t compressedBufSize = LZ4_compressBound(origBufSize);
@@ -142,38 +169,13 @@ CelsResult __cdecl CelsMain (void* self, int service, CelsNum subservice, void* 
              + (service==CELS_GET_COMPRESSION_MEMORY? LZ4_sizeofState() + LZ4_CHUNKSIZE_WIDTH : 0);
 
     case CELS_COMPRESS:
-        if (inbuf && outbuf)    // Memory buffer compression: from inbuf to outbuf
-        {
-            // LZ4_compress*() returns compressed size, or 0 if compression failed for any reason
-            outsize = LZ4_compress_fast((const char*)inbuf, (char*)outbuf, insize, outsize, codec->acceleration);
-
-            if (codec->MinCompression > 0  &&  outsize > insize * codec->MinCompression)
-                return CELS_ERROR_OUTBLOCK_TOO_SMALL;
-
-            return (outsize > 0 ?  outsize : CELS_ERROR_GENERAL);
-        }
-
-        if (!inbuf && !outbuf)
-        {
-            return CELS_LZ4_compress(codec, ud,cb);
-        }
-
+        if (inbuf && outbuf)    return CELS_LZ4_compress_membuf(codec, inbuf,insize, outbuf,outsize, ud,cb);
+        if (!inbuf && !outbuf)  return CELS_LZ4_compress_stream(codec, ud,cb);
         return CELS_ERROR_NOT_IMPLEMENTED;
 
     case CELS_DECOMPRESS:
-        if (inbuf && outbuf)    // Memory buffer decompression: from inbuf to outbuf
-        {
-            // LZ4_decompress_safe() returns output size, or negative value if decompression failed
-            outsize = LZ4_decompress_safe((const char*)inbuf, (char*)outbuf, insize, outsize);
-
-            return (outsize >= 0 ?  outsize : CELS_ERROR_BAD_COMPRESSED_DATA);
-        }
-
-        if (!inbuf && !outbuf)
-        {
-            return CELS_LZ4_decompress(codec, ud,cb);
-        }
-
+        if (inbuf && outbuf)    return CELS_LZ4_decompress_membuf(codec, inbuf,insize, outbuf,outsize, ud,cb);
+        if (!inbuf && !outbuf)  return CELS_LZ4_decompress_stream(codec, ud,cb);
         return CELS_ERROR_NOT_IMPLEMENTED;
 
     default:
